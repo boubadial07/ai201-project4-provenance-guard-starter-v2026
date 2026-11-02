@@ -42,63 +42,53 @@ Two things worth knowing before you pick numbers:
   a **miss**.
 
 ---
-## 1.
+## 1. False Positives
 
-<!-- Your criterion. It must name a number. -->
-
-
+Of 10 pieces of writing I wrote myself, at most 1 may be labelled high-confidence AI in each of the three trials.
 
 **Why this target:**
 
-
+I allow at most 1 false positive in 10 because falsely accusing a human writer of using AI can cause more harm than missing some AI-generated content.
 
 ---
 
-## 2.
+## 2. Score Spread
 
-<!-- Your criterion. -->
-
-
+The average confidence scores for 10 clearly human-written samples and 10 clearly AI-generated samples must differ by at least 0.20 in each of the three trials.
 
 **Why this target:**
 
-
+I chose a minimum difference of 0.20 because it requires meaningful separation between the two groups while allowing for some variation in writing styles and model predictions.
 
 ---
 
-## 3.
+## 3. Label Coverage
 
-<!-- Your criterion. -->
-
-
+All 3 system labels (High-confidence AI, High-confidence human, and Unsure) must be reachable, with at least one test submission producing each label in every trial.
 
 **Why this target:**
 
-
+I require all three labels to be reachable because the system must distinguish between high-confidence predictions and uncertain results. This prevents the system from relying on only one or two outcomes.
 
 ---
 
-## 4.
+## 4. Appeal Process
 
-<!-- Your criterion. -->
-
-
+All valid appeal requests across the three trials must be successfully recorded, change the associated submission status to `under_review`, and return a confirmation response.
 
 **Why this target:**
 
-
+I require every valid appeal to be recorded and acknowledged because writers must have a reliable way to challenge incorrect decisions. An appeal should never disappear without confirmation.
 
 ---
 
-## 5.
+## 5. Bad Input Handling
 
-<!-- Your criterion. -->
-
-
+The system must reject all three types of invalid submissions (missing `text`, empty `text`, and missing `creator_id`) with an HTTP 400 error and a clear error message in every trial.
 
 **Why this target:**
 
-
+I require invalid submissions to be rejected because incomplete or empty requests should not be analyzed as valid writing. This helps maintain reliable system behavior.
 
 ---
 
