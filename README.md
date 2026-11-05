@@ -78,6 +78,16 @@ After the initial calibration, I tested a more balanced weighting configuration.
 | Formal human | 0.39365 | Unsure | 0.37915 | Unsure |
 | Lightly edited AI | 0.67569 | AI | 0.58615 | Unsure |
 
+### Combining rule
+
+The combining rule is implemented in `scoring.py`, inside the `combine_signals()` function. It uses a weighted average of the model signal and style signal.
+
+The current configuration in `config.py` assigns 50% weight to the model signal and 50% to the style signal:
+
+`combined_score = (0.50 × model_score) + (0.50 × style_score)`
+
+Both signals contribute equally to the final score. When the signals disagree, the weighted average balances their results and may produce an unsure classification.
+
 **What I learned:**
 
 The 50/50 configuration reduced the combined scores and prevented the intended human samples from receiving high-confidence AI classifications. However, both AI-intended samples also received unsure classifications.
