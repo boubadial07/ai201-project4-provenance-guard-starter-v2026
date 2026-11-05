@@ -157,20 +157,52 @@ These weights and thresholds are initial design choices and have not been scient
 | Score range | Guess | Label returned to the user |
 |---|---|---|
 | 0.00–0.35 | `human` | This writing is likely human-written. |
-| Greater than 0.35 and less than 0.65 | `unsure` | We cannot confidently determine whether this writing was written by a human or AI. |
+| >0.35 and <0.65 | `unsure` | We cannot confidently determine whether this writing was written by a human or AI. |
 | 0.65–1.00 | `ai` | This writing is likely AI-generated. |
 
 **Why I worded the unsure label this way:**
 
-I chose wording that communicates uncertainty without making an unsupported accusation. The system cannot always reliably distinguish human-written content from AI-generated content, so the unsure label avoids presenting an uncertain prediction as a fact.
+I chose wording that communicates uncertainty without making an unsupported accusation. The system cannot always reliably distinguish human-written content from AI-generated content, so the unsure label avoids presenting an uncertain prediction as a fact. It also recognizes that a person may have written every word themselves.
 
 ---
 
-## Sample Run
+### Sample Run
 
-<!-- One submission and one appeal, pasted as text: the request, the response,
-     and the log entries. -->
+#### 1. Submit writing
 
+I submitted a paragraph through `POST /submit`. The system returned:
+
+```json
+{
+  "combined_score": 0.6604,
+  "confidence": 0.6604,
+  "content_id": "ca64f988-9b1e-49e6-a88e-4f23642a80ad",
+  "guess": "ai",
+  "label": "This writing is likely AI-generated.",
+  "model_score": 0.8951,
+  "style_score": 0.4257
+}
+```
+
+#### 2. Submit an appeal
+
+I used the returned `content_id` to submit an appeal through `POST /appeal`.
+
+The API returned:
+
+```json
+{
+  "content_id": "ca64f988-9b1e-49e6-a88e-4f23642a80ad",
+  "message": "Your appeal has been received and is under review.",
+  "status": "under_review"
+}
+```
+
+#### 3. Verify the audit log
+
+I checked `GET /log` and confirmed that the original decision remained recorded with status `decided`. A separate appeal event appeared with the same `content_id`, the writer's reasoning, and status `under_review`.
+
+This confirmed that appeals are recorded without deleting or replacing the original decision.
 **A submission**
 
 **Request:**
