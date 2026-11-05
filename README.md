@@ -36,45 +36,112 @@
 
 ## What This Does
 
-<!-- The path a submission takes, from arriving to the label a reader sees.
-     Six or seven steps — this is the trace you wrote in Milestone 1. -->
+When a user submits writing, Provenance Guard follows these steps:
 
-
+1. The website sends the submitted text and creator ID to the `POST /submit` endpoint.
+2. `detector.py` analyzes the text using a local GPT-2 language model and calculates a model signal based on text predictability.
+3. `stylometry.py` analyzes writing characteristics, including sentence-length variation, vocabulary variety, and punctuation density.
+4. `scoring.py::combine_signals` combines the model signal and style signal using a weighted average.
+5. The combined score is passed to `scoring.py::score_to_label`, which assigns one of three outcomes: high-confidence AI, high-confidence human, or unsure.
+6. `audit.py` records the submission, signal scores, combined score, prediction, label, and decision status.
+7. The service returns the content ID, prediction, confidence score, individual signal scores, and reader-friendly label to the website.
 
 ---
 
 ## Signals and Scoring
 
-<!-- For each signal: what property it measures, why that might differ between
-     human and AI writing, and WHAT IT CAN'T SEE.
+### Milestone 4 calibration results
 
-     The blind spot is not optional. If you can't name it you don't understand
-     the signal yet — and unit 8's attack set is built out of blind spots. -->
+I tested four deliberately selected writing samples: clearly AI-generated, clearly human-written, formal human writing, and lightly edited AI-generated writing.
+
+| Input | Model score | Style score | Combined score | Prediction |
+|---|---:|---:|---:|---|
+| Clearly AI | 0.7719 | 0.3002 | 0.63039 | Unsure |
+| Clearly human | 0.8341 | 0.3695 | 0.69472 | AI |
+| Formal human | 0.4154 | 0.3429 | 0.39365 | Unsure |
+| Lightly edited AI | 0.8100 | 0.3623 | 0.67569 | AI |
+
+**What surprised me:**
+
+The clearly human sample received a higher model score than the clearly AI sample and was classified as AI-generated. The clearly AI sample was classified as unsure because the style signal lowered the combined score.
+
+These results show that the current detector and scoring configuration do not reliably distinguish all four writing categories. The results also demonstrate why both signal scores must be recorded for further evaluation.
+
+### Weighting experiment: 70/30 versus 50/50
+
+After the initial calibration, I tested a more balanced weighting configuration. I changed the model and style weights from 70/30 to 50/50 while keeping the classification thresholds unchanged.
+
+| Input | 70/30 score | 70/30 prediction | 50/50 score | 50/50 prediction |
+|---|---:|---|---:|---|
+| Clearly AI | 0.63039 | Unsure | 0.53605 | Unsure |
+| Clearly human | 0.69472 | AI | 0.60180 | Unsure |
+| Formal human | 0.39365 | Unsure | 0.37915 | Unsure |
+| Lightly edited AI | 0.67569 | AI | 0.58615 | Unsure |
+
+**What I learned:**
+
+The 50/50 configuration reduced the combined scores and prevented the intended human samples from receiving high-confidence AI classifications. However, both AI-intended samples also received unsure classifications.
+
+This experiment demonstrates a trade-off between reducing false positives and confidently identifying AI-generated writing. I retained the 50/50 configuration as an experimental choice, while recognizing that more testing is needed before drawing conclusions about overall accuracy.
+
+---
 
 ### Signal one — the model signal
 
 **What it measures:**
 
+The model signal uses a local GPT-2 language model to calculate text perplexity, which measures how predictable the submitted writing is. The detector converts perplexity into a score between 0 and 1.
+
 **Why that might differ between human and AI writing:**
 
+AI-generated writing may contain predictable word patterns because language models tend to select likely next words. Human writing may contain more unusual word choices and less predictable sentence structures.
+
 **What it can't see:**
+
+Predictability does not prove authorship. Plain, ordinary human writing, including writing by people using a second language, can receive high AI-likelihood scores. The detector cannot reliably determine who actually wrote the text.
 
 ### Signal two — the style signal
 
 **What it measures:**
 
+The style signal analyzes three surface-level writing characteristics:
+
+1. **Sentence-length variation:** Measures how much sentence lengths differ from one another.
+2. **Type-token ratio:** Measures vocabulary variety by dividing the number of unique words by the total number of words.
+3. **Punctuation density:** Measures the number of punctuation characters relative to the total number of characters.
+
+The implementation converts these measurements into component scores and averages them equally to produce a style score between 0 and 1.
+
 **Why that might differ between human and AI writing:**
+
+The scoring approach treats more consistent sentence lengths and less varied vocabulary as potentially AI-like patterns. It also treats higher punctuation density as a potentially AI-like pattern. These are design assumptions used by this project, not universal rules about how humans or AI write.
 
 **What it can't see:**
 
-### The combining rule
+The style signal cannot understand the meaning of a text or verify who wrote it. Human and AI writing can share similar patterns, and someone can change sentence structure, vocabulary, or punctuation without changing authorship.
 
-<!-- Write the rule in words, then give the numbers. What happens when the two
-     signals disagree? -->
+### The combining rule
 
 **The rule:**
 
+The system combines the model signal and style signal using a weighted average. The model signal has more influence on the final score, while the style signal provides additional information about writing patterns.
+
 **The numbers:**
+
+- Model signal: 70% (0.70)
+- Style signal: 30% (0.30)
+
+**Where it lives:** `scoring.py::combine_signals`
+
+**A case where my two signals split, and what my rule does with it:**
+
+For example, suppose the model signal is 0.80 and the style signal is 0.20. The model suggests AI-like writing, while the style signal suggests human-like writing.
+
+Combined score = (0.70 × 0.80) + (0.30 × 0.20) = **0.62**.
+
+The result falls into the unsure range because it is between 0.35 and 0.65. This demonstrates how the weighted average can produce an uncertain result when the two signals disagree.
+
+These weights and thresholds are initial design choices and have not been scientifically validated.
 
 **Where it lives:** `scoring.py::combine_signals`
 
@@ -83,29 +150,19 @@
 
 **A case where my two signals split, and what my rule does with it:**
 
-
-
 ---
 
 ## Label Variants
 
-<!-- The exact text of all three labels, as a reader would see them, and the
-     score range each covers.
-
-     Write them for someone who has never heard the word "threshold". -->
-
-| Label | Score range | The exact text a reader sees |
+| Score range | Guess | Label returned to the user |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| 0.00–0.35 | `human` | This writing is likely human-written. |
+| Greater than 0.35 and less than 0.65 | `unsure` | We cannot confidently determine whether this writing was written by a human or AI. |
+| 0.65–1.00 | `ai` | This writing is likely AI-generated. |
 
-**Why I worded the "unsure" one this way:**
-<!-- It's the hardest of the three. It has to admit uncertainty without
-     sounding like an accusation, because the person reading it may well have
-     written every word themselves. -->
+**Why I worded the unsure label this way:**
 
-
+I chose wording that communicates uncertainty without making an unsupported accusation. The system cannot always reliably distinguish human-written content from AI-generated content, so the unsure label avoids presenting an uncertain prediction as a fact.
 
 ---
 
@@ -116,58 +173,96 @@
 
 **A submission**
 
-<!-- The response needs content_id, guess, confidence, label, AND both
-     signal scores - model_score and style_score. Unit 8's tools read those
-     two off the response, so leaving them out costs you next unit's
-     diagnostics. -->
-
-```bash
-$ curl -X POST http://127.0.0.1:5000/submit \
-  -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
-```
+**Request:**
 
 ```json
+{
+  "text": "Yesterday was exhausting. I missed the bus, spilled coffee on my shirt, and arrived late. Honestly, what a morning! I finally got home and relaxed.",
+  "creator_id": "test-user-001"
+}
+```
 
+**Response:**
+
+```json
+{
+  "combined_score": 0.48983,
+  "confidence": 0.48983,
+  "content_id": "daa971fb-a25e-45a1-bfbc-94fe00b75ed8",
+  "guess": "unsure",
+  "label": "We cannot confidently determine whether this writing was written by a human or AI.",
+  "model_score": 0.5696,
+  "style_score": 0.3037
+}
 ```
 
 **An appeal**
 
-```bash
-$ curl -X POST http://127.0.0.1:5000/appeal \
-  -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
-```
+**Request:**
+{
+  "content_id": "daa971fb-a25e-45a1-bfbc-94fe00b75ed8",
+  "reasoning": "I wrote this text myself and would like the decision reviewed."
+}
 
-```json
 
-```
+**Response:**
+{
+  "content_id": "daa971fb-a25e-45a1-bfbc-94fe00b75ed8",
+  "message": "Your appeal has been received and is under review.",
+  "status": "under_review"
+}
+
 
 **What the log shows afterwards**
 
-```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
+**Request:**
+
+```powershell
+$logResponse = Invoke-RestMethod -Uri "http://127.0.0.1:5000/log" -Method Get
+$logResponse | ConvertTo-Json -Depth 10
 ```
+
+**Relevant log entries:**
 
 ```json
-
+{
+  "count": 13,
+  "entries": [
+    {
+      "content_id": "daa971fb-a25e-45a1-bfbc-94fe00b75ed8",
+      "creator_id": "test-user-001",
+      "guess": "unsure",
+      "model_score": 0.5696,
+      "style_score": 0.3037,
+      "combined_score": 0.48983,
+      "status": "decided"
+    },
+    {
+      "content_id": "daa971fb-a25e-45a1-bfbc-94fe00b75ed8",
+      "creator_id": "test-user-001",
+      "event": "appeal",
+      "reasoning": "I wrote this text myself and would like the decision reviewed.",
+      "status": "under_review"
+    }
+  ]
+}
 ```
+
+**What this demonstrates:**
+
+The audit log preserves the original submission decision and records the appeal as a separate event. The appeal is marked `under_review` without automatically changing the original classification.
 
 ---
 
 ## How I Used AI
 
-**Moment 1**
+### Moment 1: Building the stylometry signal
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+I asked AI to help me understand how to calculate sentence-length variation, type-token ratio, and punctuation density in Python. AI explained the calculations and suggested ways to normalize the measurements into scores. I reviewed the suggestions, implemented the functions in `stylometry.py`, and tested them with sample paragraphs. I also adjusted the scoring formula to include all three characteristics.
 
-**Moment 2**
+### Moment 2: Combining signals and implementing appeals
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+I asked AI to explain how to combine the model and style signals and how to implement the appeal workflow. AI suggested a weighted-average approach and helped me understand how to record appeal events in the audit log. I implemented the logic in `scoring.py` and `app.py`, selected the initial 70/30 weights, and tested the submission and appeal endpoints using PowerShell. I reviewed the actual JSON responses and verified that appeals were recorded with the `under_review` status.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 

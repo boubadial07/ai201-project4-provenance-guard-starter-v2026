@@ -30,6 +30,9 @@ from flask import Flask, jsonify, request
 
 import audit
 import config
+import detector
+import stylometry
+import scoring
 
 app = Flask(__name__)
 
@@ -126,6 +129,9 @@ def ping():
     the framework turns it into a response. That's the whole idea.
     """
     payload = request.get_json(silent=True) or {}
+    print("DEBUG raw data:", request.data)
+    print("DEBUG content type:", request.content_type)
+    print("DEBUG payload:", payload)
     return jsonify({
         "ok": True,
         "you_sent": payload.get("message"),
@@ -201,15 +207,47 @@ def submit():
     """
     payload = request.get_json(silent=True) or {}
 
-    # TODO: delete this and build the route.
+    text = payload.get("text", "")
+    creator_id = payload.get("creator_id", "")
+
+    if not isinstance(text, str) or not text.strip():
+        return jsonify({
+            "error": "invalid_text",
+            "message": "Text is required and cannot be empty."
+        }), 400
+
+    if not isinstance(creator_id, str) or not creator_id.strip():
+        return jsonify({
+            "error": "invalid_creator_id",
+            "message": "A valid creator_id is required."
+        }), 400
+
+    model_score = detector.model_signal(text)
+    style_score = stylometry.style_signal(text)
+    combined_score = scoring.combine_signals(model_score, style_score)
+
+    guess, label = scoring.score_to_label(combined_score)
+
+    content_id = str(uuid.uuid4())
+
+    audit.log_decision(
+        content_id=content_id,
+        creator_id=creator_id,
+        guess=guess,
+        model_score=model_score,
+        style_score=style_score,
+        combined_score=combined_score,
+        label=label,
+    )
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /submit isn't built yet — see the TODO in app.py.",
-        "you_sent": {
-            "text_length": len(payload.get("text", "")),
-            "creator_id": payload.get("creator_id"),
-        },
-    }), 501
+        "content_id": content_id,
+        "style_score": style_score,
+        "combined_score": combined_score,
+        "guess": guess,
+        "confidence": combined_score,
+        "model_score": model_score,
+        "label": label
+    }), 200
 
 
 @app.post("/appeal")
@@ -234,12 +272,34 @@ def appeal():
     """
     payload = request.get_json(silent=True) or {}
 
-    # TODO: delete this and build the route.
+    content_id = payload.get("content_id", "")
+    reasoning = payload.get("reasoning", "")
+
+    if not content_id or not reasoning:
+        return jsonify({
+            "error": "missing_fields",
+            "message": "Both content_id and reasoning are required."
+        }), 400
+
+    entries = audit.entries_for(content_id)
+
+    if not entries:
+        return jsonify({
+            "error": "not_found",
+            "message": "No submission found with that content_id."
+        }), 404
+
+    audit.log_appeal(
+        content_id=content_id,
+        creator_id=entries[0].get("creator_id", ""),
+        reasoning=reasoning
+    )
+
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /appeal isn't built yet — see the TODO in app.py.",
-        "you_sent": payload,
-    }), 501
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Your appeal has been received and is under review."
+}), 200
 
 
 # ── Already works ─────────────────────────────────────────────────────────────
