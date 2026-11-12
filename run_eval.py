@@ -44,14 +44,35 @@ DEFAULT_URL = f"http://{config.HOST}:{config.PORT}"
 
 def bodies_for(scenario):
     """
-    The request bodies one scenario sends.
+    Build request bodies for each scenario.
 
-    A "texts" scenario gets a creator_id made up for it. A "bodies" scenario is
-    sent exactly as written, which is how a bad-input criterion says things a
-    string can't — no `text` field, a null, something enormous.
+    Supports:
+    - human_texts and ai_texts for score-spread testing
+    - texts for ordinary scenarios
+    - bodies for malformed requests
     """
     if scenario.get("bodies"):
         return list(scenario["bodies"])
+
+    if "human_texts" in scenario and "ai_texts" in scenario:
+        human_bodies = [
+            {
+                "text": text,
+                "creator_id": f"eval_human_{i}"
+            }
+            for i, text in enumerate(scenario["human_texts"], 1)
+        ]
+
+        ai_bodies = [
+            {
+                "text": text,
+                "creator_id": f"eval_ai_{i}"
+            }
+            for i, text in enumerate(scenario["ai_texts"], 1)
+        ]
+
+        return human_bodies + ai_bodies
+
     return [
         {"text": text, "creator_id": f"eval_{scenario['name'][:12]}_{i}"}
         for i, text in enumerate(scenario["texts"], 1)
@@ -133,8 +154,37 @@ def main():
                                     "sent": preview})
 
             trials.append(results)
-            guesses = [r.get("guess") or "—" for r in results]
-            print(f"  trial {trial}: {', '.join(guesses)}")
+
+            if "human_texts" in scenario and "ai_texts" in scenario:
+                human_results = results[:len(scenario["human_texts"])]
+                ai_results = results[len(scenario["human_texts"]):]
+
+                human_scores = [
+                    r["confidence"] for r in human_results
+                    if isinstance(r.get("confidence"), (int, float))
+                ]
+
+                ai_scores = [
+                    r["confidence"] for r in ai_results
+                    if isinstance(r.get("confidence"), (int, float))
+                ]
+
+                if human_scores and ai_scores:
+                    human_average = sum(human_scores) / len(human_scores)
+                    ai_average = sum(ai_scores) / len(ai_scores)
+                    difference = abs(ai_average - human_average)
+
+                    print(
+                        f"  trial {trial}: "
+                        f"Human average={human_average:.4f}, "
+                        f"AI average={ai_average:.4f}, "
+                        f"Difference={difference:.4f}"
+                    )
+                else:
+                    print(f"  trial {trial}: Missing confidence scores")
+            else:
+                guesses = [r.get("guess") or "—" for r in results]
+                print(f"  trial {trial}: {', '.join(guesses)}")
 
         rows.append({"scenario": scenario, "trials": trials})
 

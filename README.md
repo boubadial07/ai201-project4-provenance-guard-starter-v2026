@@ -312,25 +312,19 @@ I asked AI to explain how to combine the model and style signals and how to impl
 
 ## Rate Limiting
 
-**My limits:** ___ per minute, ___ per day
+**My limits:** 10 per minute, 200 per day
 
-**Why those numbers and not others:**
-<!-- Think about two people: a real writer submitting their own work a few
-     times an hour, and a script sending a thousand variations to map your
-     thresholds. Your numbers have to be liveable for the first and hostile to
-     the second. -->
+**Why these numbers and not others:**
 
-**What a caller counts as:** <!-- per address, or per creator_id? They fail
-differently — one script can look like a thousand callers, and one household
-can look like one. -->
+I chose 10 requests per minute to allow legitimate writers to submit and revise their work without unnecessary interruptions while limiting automated scripts that repeatedly submit variations to probe the detector. The daily limit of 200 provides room for normal usage while restricting sustained automated activity.
+
+**What a caller counts as:**
+
+Requests are counted by `creator_id` when it is provided. If a valid creator ID is unavailable, the system falls back to the caller's IP address.
 
 **The run of status codes when I pushed past it:**
 
-<!-- python run_attacks.py --flood 15 -->
-
-```
-
-```
+10 requests returned HTTP 200 (accepted), followed by 5 requests returning HTTP 429 (rate limited).
 
 ---
 
@@ -343,16 +337,81 @@ can look like one. -->
 
 **Ten audit log entries from the run**
 
-<!-- Choose entries that show the interesting failures, not the ten easiest. -->
-
 ```json
+[
+  {
+    "creator_id": "attacker_EV01",
+    "content_id": "566aa29e-8a5b-4572-a372-720111f4b2ad",
+    "guess": "human",
+    "combined_score": 0.27105,
+    "status": "decided"
+  },
+  {
+    "creator_id": "attacker_EV09",
+    "content_id": "d5eac682-5fb2-48ee-8314-bc42948cc9f3",
+    "guess": "unsure",
+    "combined_score": 0.5057,
+    "status": "decided"
+  },
+  {
+    "creator_id": "attacker_FP03",
+    "content_id": "3194ef55-55e7-4aa9-8895-bcd0c11026e6",
+    "guess": "unsure",
+    "combined_score": 0.58855,
+    "status": "decided"
+  },
+  {
+    "creator_id": "attacker_FP05",
+    "content_id": "c42325ac-d021-452d-80b7-513fc1b2d3ce",
+    "guess": "unsure",
+    "combined_score": 0.628,
+    "status": "decided"
+  },
+  {
+    "creator_id": "attacker_PI05",
+    "content_id": "23cbc198-80c1-409c-9de1-75fabe9808d7",
+    "guess": "unsure",
+    "combined_score": 0.56235,
+    "status": "decided"
+  },
+  {
+    "creator_id": "attacker_MF06",
+    "content_id": "7bedcf87-6346-4a8d-a8e0-969ea3f6b3be",
+    "guess": "ai",
+    "combined_score": 0.8318,
+    "status": "decided"
+  },
+  {
+    "creator_id": "attacker_MF08",
+    "content_id": "4d64a6dc-4a46-45d0-bc2d-fc56239c73cc",
+    "guess": "ai",
+    "combined_score": 0.78655,
+    "status": "decided"
+  },
+  {
+    "creator_id": "attacker_flood",
+    "content_id": "e6192710-b0da-4aba-adba-8c58e2f73499",
+    "guess": "human",
+    "combined_score": 0.21135,
+    "status": "decided"
+  },
+  {
+    "creator_id": "attacker_flood",
+    "guess": null,
+    "status": "rejected"
+  },
+  {
+    "creator_id": "attacker_flood",
+    "guess": null,
+    "status": "rejected"
+  }
+]
 
 ```
 
 **The single worst outcome** — the one I'd least want to explain to a writer
 whose work got caught by it:
-
-
+The worst outcome was RQ07, which sent a JSON array instead of the expected JSON object. The service returned HTTP 500 because the route attempted to call .get() on a list, resulting in an AttributeError. This was a failure at the route/input-validation stage, before the scoring functions could process the request. The service should validate the incoming JSON structure and return a controlled HTTP 400 response instead of an internal server error.
 
 ---
 
@@ -362,18 +421,133 @@ whose work got caught by it:
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |
+| 1. My own writing | No more than 1 high-confidence AI label out of 10 | 0 | 0 | 0 | Passed |
+| 2. Score spread | Difference of at least 0.20 | 0.0995 | 0.0995 | 0.0995 | Missed |
+| 3. Label coverage | All 3 labels reachable | Unsure only | Unsure only | Unsure only | Missed |
+| 4. Appeal process | All valid appeals recorded as under_review | 1 manual test passed | Not tested | Not tested | Partially verified |
+| 5. Bad input handling | All 3 invalid inputs return HTTP 400 | 3/3 returned 400 | 3/3 returned 400 | 3/3 returned 400 | Passed |
+
+### Criterion 4 — Appeal process
+
+**Target:** A valid appeal changes the submission status to `under_review` in every test.
+
+I tested the appeal process manually. First, I submitted a valid text through `/submit` and received a `content_id`. I then sent an appeal to `/appeal` using that ID and a written explanation.
+
+The endpoint returned HTTP 200 and confirmed that the appeal was received. I also checked the audit log and verified that it contained both the original submission event (`decided`) and the appeal event (`under_review`) for the same content ID.
+
+**Result:** The manual appeal test passed. The appeal event was successfully recorded in the audit log.
 
 **Real output from one trial**, pasted as text, naming the file and function
 that produced it:
 
-```json
+### Criterion 5 — Bad input handling (Trial 1)
 
+Source: `results/run_2026-11-11_2232_milestone3_bad_input.md`
+
+Function: `run_eval.py::main`
+
+The following three test cases returned HTTP 400 as expected:
+
+```json
+[
+  {
+    "status": 400,
+    "sent": "{\"creator_id\": \"eval_missing_text\"}"
+  },
+  {
+    "status": 400,
+    "sent": "(empty text)"
+  },
+  {
+    "status": 400,
+    "sent": "{\"text\": \"This is a valid test submission.\"}"
+  }
+]
 ```
+
+Result: **3 out of 3 invalid inputs returned HTTP 400.** Criterion 5 passed in all three trials.
+
+### Criterion 2 — Score spread (Trial 1)
+
+Source: `run_eval.py` evaluation report
+
+The average confidence scores were:
+
+- Human samples: 0.4313
+- AI-generated samples: 0.5308
+- Absolute difference: 0.0995
+
+Target: At least 0.20.
+
+Result: **Missed.** The observed difference of 0.0995 was below the required 0.20 threshold.
+
+### Criterion 3 — Label coverage (Trial 1)
+
+Source: `results/run_2026-11-11_2232_milestone3_bad_input.md`
+
+Function: `run_eval.py::main`
+
+The three test samples produced these labels:
+
+```json
+[
+  {
+    "guess": "unsure",
+    "confidence": 0.58245
+  },
+  {
+    "guess": "unsure",
+    "confidence": 0.5297
+  },
+  {
+    "guess": "unsure",
+    "confidence": 0.5642
+  }
+]
+```
+
+Result: **Missed.** All three samples received the `unsure` label. The evaluation did not demonstrate that all three required labels were reachable.
+
+### Criterion 1 — My own writing (Trial 1)
+
+Source: `results/run_2026-11-11_2232_milestone3_bad_input.md`
+
+Function: `run_eval.py::main`
+
+The 10 personal writing samples produced the following results:
+
+```json
+{
+  "total_samples": 10,
+  "high_confidence_ai": 0,
+  "human": 2,
+  "unsure": 8
+}
+```
+
+Result: **Passed.** None of the 10 samples received a high-confidence AI label, meeting the target of no more than one false positive.
+
+### Criterion 4 — Appeal process (Manual Test)
+
+Source: Manual test using the `/submit`, `/appeal`, and `/log` endpoints.
+
+The appeal process was tested using a valid submission with content ID:
+
+`226fbf9c-ce0a-451c-891b-69f157021ad9`
+
+The appeal request returned HTTP 200 with the following response:
+
+```json
+{
+  "content_id": "226fbf9c-ce0a-451c-891b-69f157021ad9",
+  "status": "under_review",
+  "message": "Your appeal has been received and is under review."
+}
+```
+
+The audit log was also checked and confirmed that a separate appeal event was recorded for the same content ID and creator ID.
+
+Result: **One manual appeal test passed.** The appeal was successfully recorded and its status changed to `under_review`. The full three-trial acceptance target has not yet been verified.
 
 **Diagnoses**
 
@@ -391,7 +565,21 @@ that produced it:
 
      Look for a pattern. Five failures on one signal is one problem, not five. -->
 
+### Diagnosis 1 — Evasion attacks
 
+EV01–EV09 bypassed the AI classification by receiving either a human or unsure label. The failures involved both signals. Some attacks manipulated writing-style characteristics, such as word variety and sentence-length spread, while others affected the model signal through unusual words or short text. The combining rule weighted both signals, allowing manipulated scores to fall below the AI classification threshold. The label mapping then returned human or unsure instead of AI.
+
+### Diagnosis 2 — Request validation failures
+
+In the baseline run, MF02 and RQ07 caused HTTP 500 errors at the route stage. MF02 submitted a single-character text that reached the model signal, which raised a ValueError because the text was too short. RQ07 submitted a JSON array instead of an object, causing an AttributeError when the route attempted to call `.get()`. I addressed both failures by adding payload-type validation and minimum text-length validation. In the after-fix run, both inputs returned controlled HTTP 400 responses instead of HTTP 500 errors.
+
+### Diagnosis 3 — Malformed text handling
+
+MF04 and MF06 exposed weaknesses in text validation. Punctuation-only and emoji-only inputs were initially accepted and passed to the scoring functions. I added an alphanumeric-character validation check, which now rejects these inputs with HTTP 400. MF03 was labeled as a control-character attack, but inspection of the original CSV showed that its payload was actually "test red", which is ordinary text. Therefore, its HTTP 200 response is expected.
+
+### Diagnosis 4 — Rate limiting
+
+The flood attack demonstrated that rate limiting worked as intended. The first 10 requests were accepted, while the next two received HTTP 429 responses. The limiter successfully restricted repeated submissions from the same creator.
 
 ---
 
@@ -401,16 +589,46 @@ that produced it:
 
 **Which diagnosis pointed at it:**
 
-### Attack Run — After
+## Attack Run — After (Validation Fixes)
 
-<!-- Same format. `run_attacks.py --label after` -->
+After reviewing the baseline attack results, I improved request validation in `app.py`.
 
+I added validation to ensure that:
+- The request body must be a valid JSON object.
+- Text must be a nonempty string.
+- Text must contain at least 10 characters.
+- Text must contain at least one letter or number.
+- Invalid requests receive controlled HTTP 400 responses instead of server errors.
+
+### Post-fix results
+
+I reran all 56 attacks using `python run_attacks.py --set .\attack_set`.
+
+- HTTP 200: 38
+- HTTP 400: 16
+- HTTP 429: 2
+- HTTP 500: 0
+
+Both original HTTP 500 failures were eliminated:
+- MF02: Single-character input now returns HTTP 400.
+- RQ07: JSON array input now returns HTTP 400.
+
+MF04 (punctuation-only) and MF06 (emoji-only) also now return HTTP 400.
+
+MF03 returned HTTP 200 because inspection of the original attack data showed its payload was ordinary text ("test red"), not control characters.
+
+The flood test continued to work as expected: 10 requests were accepted and the next two were rate limited with HTTP 429.
+
+Attack report: `results/attack_run_2026-11-10_1037.md`
 
 
 **Did it help, and how do I know:**
 
-<!-- Widening the unsure band usually fixes one problem and creates another.
-     Reporting that trade honestly is worth full credit. -->
+The validation fixes improved the service's handling of malformed requests. In the baseline run, two attacks caused HTTP 500 errors (MF02 and RQ07). After the fixes, both returned controlled HTTP 400 responses, and the total number of HTTP 500 errors dropped from 2 to 0.
+
+The fixes also prevented punctuation-only and emoji-only inputs from reaching the scoring functions. Rate limiting continued to reject excessive requests with HTTP 429.
+
+However, the fixes did not solve the evasion attacks (EV01–EV09), which continued to receive human or unsure classifications. This shows that input validation improved request handling, but the scoring system still needs improvement.
 
 
 
@@ -421,13 +639,29 @@ that produced it:
 <!-- For each attack still getting through and each criterion still missed:
      what you'd do, and why you stopped. -->
 
+### Criterion 2 — Score spread
 
+The original target required the average confidence scores for 10 human-written samples and 10 AI-generated samples to differ by at least 0.20 in each of the three trials.
 
-**The trade I'd make if this ran for real:**
+The observed difference was 0.0995, which did not meet the target.
 
-<!-- Two sentences. Fewer wrong accusations means more AI text getting through.
-     Say which way you'd go and WHO PAYS FOR IT. -->
+This indicates that the model and style signals did not create enough separation between the two groups. The current weighted scoring approach produces overlapping confidence scores, making it difficult to distinguish human-written content from AI-generated content reliably.
 
+A possible improvement would be to investigate how the two signals are calibrated and whether their individual scores provide enough separation before combining them.
+
+### Criterion 3 — Label coverage
+
+The target required all three labels — High-confidence AI, High-confidence human, and Unsure — to be reachable, with at least one example of each label in every trial.
+
+The evaluation did not meet this target. All three test samples received the `unsure` label across the three trials.
+
+This suggests that the test samples produced confidence scores within the current unsure range. Although the system successfully returned a label for each sample, it did not demonstrate that the high-confidence AI and high-confidence human labels were reachable.
+
+A possible improvement would be to review the scoring thresholds and test samples while preserving the original acceptance criteria.
+
+## The trade I'd make if this ran for real:
+
+I would prioritize reducing false accusations against human writers, even if that means allowing some AI-generated content to pass undetected. Writers should not be penalized by an unreliable detector, while organizations deploying this system should be responsible for funding ongoing testing, calibration, and human review.
 
 
 <!-- ═════════════════════════════════════════════════════════════════════

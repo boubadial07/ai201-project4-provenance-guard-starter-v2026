@@ -24,6 +24,7 @@ Routes:
     GET  /health      is the service up, and is the model loaded
 """
 
+from pydoc import text
 import uuid
 
 from flask import Flask, jsonify, request
@@ -157,7 +158,7 @@ def health():
 # ── YOU BUILD THIS ────────────────────────────────────────────────────────────
 
 @app.post("/submit")
-# @limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
+@limiter.limit(f"{config.RATE_LIMIT_PER_MINUTE}/minute;{config.RATE_LIMIT_PER_DAY}/day")
 def submit():
     """
     Take a piece of text, decide about it, log the decision, answer.
@@ -205,7 +206,13 @@ def submit():
     what should this do when `text` is missing, empty, or enormous? A crash on
     a malformed input is one of the most common real failures there is.
     """
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(silent=True)
+
+    if not isinstance(payload, dict):
+        return jsonify({
+            "error": "invalid_payload",
+            "message": "Request body must be a valid JSON object."
+    }), 400
 
     text = payload.get("text", "")
     creator_id = payload.get("creator_id", "")
@@ -214,6 +221,18 @@ def submit():
         return jsonify({
             "error": "invalid_text",
             "message": "Text is required and cannot be empty."
+        }), 400
+
+    if len(text.strip()) < 10:
+        return jsonify({
+            "error": "text_too_short",
+            "message": "Text must contain at least 10 characters."
+        }), 400
+
+    if not any(char.isalnum() for char in text):
+        return jsonify({
+            "error": "invalid_text",
+            "message": "Text must contain at least one letter or number."
         }), 400
 
     if not isinstance(creator_id, str) or not creator_id.strip():
