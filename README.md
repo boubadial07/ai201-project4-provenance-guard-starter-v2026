@@ -80,13 +80,24 @@ After the initial calibration, I tested a more balanced weighting configuration.
 
 ### Combining rule
 
-The combining rule is implemented in `scoring.py`, inside the `combine_signals()` function. It uses a weighted average of the model signal and style signal.
+The combining rule is implemented in `scoring.py::combine_signals`.
 
-The current configuration in `config.py` assigns 50% weight to the model signal and 50% to the style signal:
+It uses a weighted average of the model signal and style signal. The weights are configured in `config.py`:
+
+- Model signal: 50% (`WEIGHT_MODEL_SIGNAL = 0.5`)
+- Style signal: 50% (`WEIGHT_STYLE_SIGNAL = 0.5`)
+
+The formula is:
 
 `combined_score = (0.50 × model_score) + (0.50 × style_score)`
 
-Both signals contribute equally to the final score. When the signals disagree, the weighted average balances their results and may produce an unsure classification.
+The classification thresholds are:
+
+- **0.00–0.35:** High-confidence human
+- **Above 0.35 and below 0.65:** Unsure
+- **0.65–1.00:** High-confidence AI
+
+Both signals contribute equally. When they disagree, the weighted average balances their results and may produce an unsure classification.
 
 **What I learned:**
 
@@ -587,7 +598,34 @@ The flood attack demonstrated that rate limiting worked as intended. The first 1
 
 **What I changed:**
 
+I improved request validation in `app.py` by checking that incoming requests contain a valid JSON object, that text is a nonempty string with at least 10 characters, that the text contains at least one letter or number, and that `creator_id` is a nonempty string. I also added rejection logging through `audit.log_rejection()` so invalid submissions are recorded with their rejection reasons and HTTP status codes.
+
 **Which diagnosis pointed at it:**
+
+The baseline attack run exposed two HTTP 500 responses caused by malformed requests, as well as malformed text inputs that were not being rejected consistently. These results showed that the submission endpoint needed stronger input validation and better rejection logging.
+
+### Baseline vs. After-Fix Comparison
+
+Both runs used the same 56-attack test set.
+
+| HTTP Status | Baseline — Nov 8 | After Fixes — Nov 13 | Change |
+|---|---:|---:|---|
+| HTTP 200 | 40 | 38 | -2 |
+| HTTP 400 | 12 | 16 | +4 |
+| HTTP 429 | 2 | 2 | No change |
+| HTTP 500 | 2 | 0 | -2 |
+| **Total** | **56** | **56** | **Same test size** |
+
+**Measured improvement:**
+
+- HTTP 500 errors decreased from 2 to 0.
+- Invalid requests that previously caused server errors now receive controlled HTTP 400 responses.
+- Rate limiting continued to work, accepting the first 10 requests and rejecting the next 2 with HTTP 429.
+- The scoring system's evasion weaknesses remain unresolved; request validation does not prevent adversarial writing from receiving human or unsure classifications.
+
+**Evidence:**
+- Baseline: `results/attack_run_2026-11-08_1008.md`
+- After fixes: `results/attack_run_2026-11-13_2023_after_audit_fix.md`
 
 ## Attack Run — After (Validation Fixes)
 
@@ -599,6 +637,33 @@ I added validation to ensure that:
 - Text must contain at least 10 characters.
 - Text must contain at least one letter or number.
 - Invalid requests receive controlled HTTP 400 responses instead of server errors.
+
+### Audit logging verification
+
+I verified the audit export in `results/audit_extract_after_audit_fix.json`.
+
+The export contained 200 records, including:
+
+- 159 successful decision records, identified by `status: decided`.
+- 1 appeal record.
+- 40 rejected request records, identified by `event: rejected`.
+
+The 40 rejection records included:
+
+| Rejection reason | Count |
+|---|---:|
+| Invalid payload | 12 |
+| Invalid text | 18 |
+| Text too short | 3 |
+| Invalid creator ID | 5 |
+| Rate limited | 2 |
+| **Total** | **40** |
+
+Successful decision records contain timestamps, creator IDs, content IDs, model scores, style scores, combined scores, labels, and statuses. Rejection records contain timestamps, creator IDs, reasons, error messages, HTTP status codes, and rejection statuses where applicable.
+
+The two rate-limited requests were recorded with the reason `rate_limited`.
+
+This verifies that the application records both successful decisions and rejected requests, providing evidence for reviewing submissions and diagnosing failures.
 
 ### Post-fix results
 
@@ -621,6 +686,9 @@ The flood test continued to work as expected: 10 requests were accepted and the 
 
 Attack report: `results/attack_run_2026-11-10_1037.md`
 
+### Automated test discovery
+
+I ran `pytest -q`, but pytest reported that no tests were collected. I also searched the project for test files outside the virtual environment and found none. Therefore, this submission's verification is based on the documented manual tests, acceptance-criteria trials, attack runs, and audit-log evidence rather than a passing automated test suite.
 
 **Did it help, and how do I know:**
 
@@ -629,8 +697,6 @@ The validation fixes improved the service's handling of malformed requests. In t
 The fixes also prevented punctuation-only and emoji-only inputs from reaching the scoring functions. Rate limiting continued to reject excessive requests with HTTP 429.
 
 However, the fixes did not solve the evasion attacks (EV01–EV09), which continued to receive human or unsure classifications. This shows that input validation improved request handling, but the scoring system still needs improvement.
-
-
 
 ---
 

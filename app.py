@@ -209,33 +209,63 @@ def submit():
     payload = request.get_json(silent=True)
 
     if not isinstance(payload, dict):
+        audit.log_rejection(
+            creator_id="unknown",
+            reason="invalid_payload",
+            http_status=400,
+            error="Request body must be a valid JSON object."
+        )
         return jsonify({
             "error": "invalid_payload",
             "message": "Request body must be a valid JSON object."
-    }), 400
+        }), 400
 
     text = payload.get("text", "")
     creator_id = payload.get("creator_id", "")
 
     if not isinstance(text, str) or not text.strip():
+        audit.log_rejection(
+            creator_id=str(creator_id) if creator_id else "unknown",
+            reason="invalid_text",
+            http_status=400,
+            error="Text is required and cannot be empty."
+        )
         return jsonify({
             "error": "invalid_text",
             "message": "Text is required and cannot be empty."
         }), 400
 
     if len(text.strip()) < 10:
+        audit.log_rejection(
+            creator_id=creator_id,
+            reason="text_too_short",
+            http_status=400,
+            error="Text must contain at least 10 characters."
+        )
         return jsonify({
             "error": "text_too_short",
             "message": "Text must contain at least 10 characters."
         }), 400
 
     if not any(char.isalnum() for char in text):
+        audit.log_rejection(
+            creator_id=creator_id,
+            reason="invalid_text",
+            http_status=400,
+            error="Text must contain at least one letter or number."
+        )
         return jsonify({
             "error": "invalid_text",
             "message": "Text must contain at least one letter or number."
         }), 400
 
     if not isinstance(creator_id, str) or not creator_id.strip():
+        audit.log_rejection(
+            creator_id="unknown",
+            reason="invalid_creator_id",
+            http_status=400,
+            error="A valid creator_id is required."
+        )
         return jsonify({
             "error": "invalid_creator_id",
             "message": "A valid creator_id is required."
