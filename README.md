@@ -766,3 +766,81 @@ I would prioritize reducing false accusations against human writers, even if tha
 ---
 
 ðŸ“– **How to run this project: [RUNNING.md](RUNNING.md)**
+
+## Capstone
+
+**What This Extends**
+
+This capstone extends Provenance Guard, the AI-content detection and provenance system developed in the previous unit. The extension focuses on hardening the `/appeal` endpoint so that malformed requests are handled safely, valid appeals receive confirmation, and invalid submissions do not cause application errors.
+
+**The Shape**
+
+Shape B — Harden Against Failure.
+
+
+**Running It**
+
+This project runs locally using Flask. The existing `RUNNING.md` file contains the environment setup and full instructions.
+
+1. Activate the project's virtual environment.
+2. Install dependencies using `pip install -r requirements.txt` if they are not already installed.
+3. Start the application in the first PowerShell terminal:
+
+   ```powershell
+   python app.py
+
+   ```
+
+4. Keep the server running. Open a second PowerShell terminal to send HTTP requests using `curl.exe`.
+5. Verify that the service is running before testing the `/appeal` endpoint.
+
+Project 9 testing will use the existing `/submit` and `/appeal` routes. A valid appeal test must first obtain an existing `content_id` from a submission.
+
+All testing will be performed locally, with request outcomes and audit evidence recorded for reproducibility.
+
+See [RUNNING.md](RUNNING.md) for the complete setup instructions.
+
+**Instrumentation**
+
+Provenance Guard uses an append-only JSONL audit log implemented in `audit.py`. Each event is stored as a separate JSON object with a UTC timestamp.
+
+The audit system supports three event types:
+
+- `log_decision()` records content decisions, including the content ID, creator ID, model score, style score, combined score, label, and status.
+- `log_appeal()` records appeals alongside the original decision without overwriting the original audit entry.
+- `log_rejection()` records rejected requests and their rejection reasons.
+
+The audit log uses a thread lock to protect writes and provides a `read_entries()` function for retrieving recorded events.
+
+For Project 9, instrumentation will be extended or verified so that rejected `/appeal` requests are also recorded. Test runs will capture the input, HTTP status, response, timestamp, and execution duration. At least ten representative audit entries will be included in the final README.
+
+**What It Costs**
+
+Provenance Guard runs locally and does not use a hosted AI API for its detection or appeal workflow. Therefore, API spending is not the primary cost metric for this capstone.
+
+The project will measure computational cost using request execution time in seconds. Ten appeal requests will be timed, and their average execution time will be calculated.
+
+The measurement will help evaluate the performance impact of the additional validation and audit logging introduced in Project 9.
+
+The average will be calculated as:
+
+Average execution time = Total execution time across 10 runs / 10
+
+Actual measurements will be added after testing.
+
+**Run Log and Verdicts**
+
+The following five acceptance criteria were defined before testing.
+
+1. **Empty request:** When a user submits an empty request to `/appeal`, the API must return HTTP 400 with a clear error message explaining that the required fields cannot be empty. The application must not crash.
+
+2. **Valid appeal:** When a user submits a valid appeal with an existing `content_id` and non-empty `reasoning`, the API must return HTTP 200, confirm that the appeal was received, and provide the associated reference ID.
+
+3. **Invalid reference ID:** When a user submits an appeal with a nonexistent `content_id`, the API must return HTTP 404 with a clear error message stating that the submission cannot be found. No appeal record should be created.
+
+4. **Missing reasoning:** When a user submits an appeal with a valid `content_id` but missing or empty `reasoning`, the API must return HTTP 400 with a clear message explaining that reasoning is required. No appeal record should be created.
+
+5. **Malformed JSON:** When a user sends a malformed or unexpected JSON structure, such as an array or string, to `/appeal`, the API must return HTTP 400 with a clear error message instead of HTTP 500. The application must remain operational, and the invalid request must not create an appeal record.
+
+Each criterion will be tested in three trials. Results, verdicts, and diagnoses will be recorded after testing.
+
